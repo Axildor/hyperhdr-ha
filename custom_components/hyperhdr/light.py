@@ -267,20 +267,26 @@ class HyperHDRBaseLight(LightEntity):
         self, rgb_color: Sequence[int], brightness: int
     ) -> list[int]:
         """Scale RGB to HA brightness for solid color priority."""
-        if brightness >= 255:
+        math_brightness = brightness
+        # Below ~4.7% the 8-bit rounding collapses the channel ratio and the
+        # color reads back as pure red. Clamp the math; the HA slider keeps
+        # tracking the real target via the adjustment channel.
+        if 0 < math_brightness < 12:
+            math_brightness = 12
+        if math_brightness >= 255:
             return list(rgb_color)
-        scale = brightness / 255.0
+        scale = math_brightness / 255.0
         return [min(255, int(round(channel * scale))) for channel in rgb_color]
 
     def _unscale_rgb_from_brightness(
         self, rgb_color: Sequence[int], brightness: int
     ) -> tuple[int, int, int]:
         """Restore full-brightness RGB from scaled solid color priority."""
-        if brightness <= 0 or brightness >= 255:
-            return tuple(rgb_color)
-        return tuple(
-            min(255, int(round(channel * 255 / brightness))) for channel in rgb_color
-        )
+        # _rgb_color always holds the full-brightness color. Round-tripping the
+        # scaled server payload through unscale + scale on every slider move
+        # compounds rounding errors and drifts the hue, so the cached color is
+        # returned as-is and scaling only happens in _scale_rgb_to_brightness.
+        return tuple(self._rgb_color)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
@@ -489,13 +495,15 @@ class HyperHDRBaseLight(LightEntity):
                 reported_rgb = priority[const.KEY_VALUE][const.KEY_RGB]
                 origin = str(priority.get(const.KEY_ORIGIN, ""))
                 if origin.startswith(DEFAULT_ORIGIN):
-                    reported_rgb = self._unscale_rgb_from_brightness(
-                        reported_rgb, self._brightness
+                    # Echo of our own already-scaled priority color. Keep the
+                    # full-brightness cache instead of pushing it through
+                    # unscale + scale again on every update.
+                    self._set_internal_state(effect=KEY_EFFECT_SOLID)
+                else:
+                    self._set_internal_state(
+                        rgb_color=reported_rgb,
+                        effect=KEY_EFFECT_SOLID,
                     )
-                self._set_internal_state(
-                    rgb_color=reported_rgb,
-                    effect=KEY_EFFECT_SOLID,
-                )
         self.async_write_ha_state()
 
     @callback
