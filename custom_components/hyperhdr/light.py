@@ -291,6 +291,8 @@ class HyperHDRBaseLight(LightEntity):
         self, rgb_color: Sequence[int], brightness: int
     ) -> tuple[int, int, int]:
         """Restore full-brightness RGB from scaled solid color priority."""
+        if 0 < brightness < SOLID_COLOR_BRIGHTNESS_FLOOR:
+            brightness = SOLID_COLOR_BRIGHTNESS_FLOOR
         if brightness <= 0 or brightness >= 255:
             return tuple(rgb_color)
         return tuple(
